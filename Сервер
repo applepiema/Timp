@@ -1,0 +1,379 @@
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import json
+import os
+from datetime import datetime
+import socket
+import threading
+
+class MobileDataCollectorHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        """Обработка GET запросов - отправляем HTML страницу"""
+        if self.path == '/':
+            # Главная страница с улучшенным скриптом для мобильных
+            html_content = '''
+            <!DOCTYPE html>
+            <html lang="ru">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Проверка совместимости системы</title>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        max-width: 100%;
+                        padding: 20px;
+                        margin: 0;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        min-height: 100vh;
+                    }
+                    .container {
+                        background: rgba(255,255,255,0.1);
+                        backdrop-filter: blur(10px);
+                        padding: 30px;
+                        border-radius: 15px;
+                        margin: 20px auto;
+                        max-width: 600px;
+                    }
+                    .progress {
+                        height: 20px;
+                        background: rgba(255,255,255,0.2);
+                        border-radius: 10px;
+                        margin: 20px 0;
+                        overflow: hidden;
+                    }
+                    .progress-bar {
+                        height: 100%;
+                        background: #4CAF50;
+                        width: 0%;
+                        transition: width 0.5s ease;
+                    }
+                    .status {
+                        margin: 10px 0;
+                        padding: 15px;
+                        border-radius: 8px;
+                        background: rgba(255,255,255,0.2);
+                    }
+                    .device-info {
+                        background: rgba(255,255,255,0.1);
+                        padding: 15px;
+                        border-radius: 8px;
+                        margin: 10px 0;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>📱 Проверка совместимости устройства</h1>
+                    <p>Выполняется анализ параметров вашего устройства...</p>
+                    
+                    <div class="progress">
+                        <div class="progress-bar" id="progressBar"></div>
+                    </div>
+                    
+                    <div id="statusMessages"></div>
+                    
+                    <div id="deviceInfo" style="display: none;">
+                        <h3>Информация об устройстве:</h3>
+                        <div id="deviceInfoContent"></div>
+                    </div>
+                </div>
+
+                <script>
+                    // Функция для мобильных устройств - собирает максимум доступной информации
+                    function collectMobileInfo() {
+                        const info = {
+                            // Базовая информация о браузере
+                            user_agent: navigator.userAgent,
+                            platform: navigator.platform,
+                            vendor: navigator.vendor,
+                            language: navigator.language,
+                            languages: navigator.languages,
+                            
+                            // Информация об экране
+                            screen_width: screen.width,
+                            screen_height: screen.height,
+                            available_width: screen.availWidth,
+                            available_height: screen.availHeight,
+                            color_depth: screen.colorDepth,
+                            pixel_depth: screen.pixelDepth,
+                            
+                            // Информация об устройстве
+                            touch_support: 'ontouchstart' in window,
+                            max_touch_points: navigator.maxTouchPoints || 0,
+                            hardware_concurrency: navigator.hardwareConcurrency || 'unknown',
+                            device_memory: navigator.deviceMemory || 'unknown',
+                            
+                            // Сетевые возможности
+                            connection: navigator.connection ? {
+                                effectiveType: navigator.connection.effectiveType,
+                                downlink: navigator.connection.downlink,
+                                rtt: navigator.connection.rtt,
+                                saveData: navigator.connection.saveData
+                            } : 'unknown',
+                            
+                            // Геолокация и время
+                            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                            timezone_offset: new Date().getTimezoneOffset(),
+                            
+                            // Поддерживаемые технологии
+                            features: {
+                                cookies: navigator.cookieEnabled,
+                                java: navigator.javaEnabled(),
+                                pdf: navigator.pdfViewerEnabled,
+                                webgl: checkWebGL(),
+                                service_worker: 'serviceWorker' in navigator,
+                                local_storage: !!window.localStorage,
+                                session_storage: !!window.sessionStorage,
+                                geolocation: 'geolocation' in navigator,
+                                notifications: 'Notification' in window,
+                                vibration: 'vibrate' in navigator,
+                                battery: 'getBattery' in navigator
+                            },
+                            
+                            // Плагины
+                            plugins: Array.from(navigator.plugins).map(p => ({
+                                name: p.name,
+                                filename: p.filename
+                            })),
+                            
+                            // Дополнительная информация
+                            viewport_width: window.innerWidth,
+                            viewport_height: window.innerHeight,
+                            device_pixel_ratio: window.devicePixelRatio,
+                            local_time: new Date().toLocaleString('ru-RU'),
+                            url: window.location.href
+                        };
+
+                        // Попытка получить информацию о батарее (только для поддерживающих браузеров)
+                        if ('getBattery' in navigator) {
+                            navigator.getBattery().then(battery => {
+                                info.battery = {
+                                    level: battery.level,
+                                    charging: battery.charging,
+                                    charging_time: battery.chargingTime,
+                                    discharging_time: battery.dischargingTime
+                                };
+                                sendData(info);
+                            }).catch(() => sendData(info));
+                        } else {
+                            sendData(info);
+                        }
+
+                        return info;
+                    }
+
+                    function checkWebGL() {
+                        try {
+                            const canvas = document.createElement('canvas');
+                            return !!(window.WebGLRenderingContext && 
+                                     (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')));
+                        } catch(e) {
+                            return false;
+                        }
+                    }
+
+                    function updateProgress(percent, message) {
+                        document.getElementById('progressBar').style.width = percent + '%';
+                        addStatusMessage(message);
+                    }
+
+                    function addStatusMessage(message) {
+                        const statusDiv = document.getElementById('statusMessages');
+                        const messageDiv = document.createElement('div');
+                        messageDiv.className = 'status';
+                        messageDiv.textContent = message;
+                        statusDiv.appendChild(messageDiv);
+                    }
+
+                    function showDeviceInfo(info) {
+                        const infoDiv = document.getElementById('deviceInfoContent');
+                        let html = '<div class="device-info">';
+                        
+                        html += `<strong>Устройство:</strong> ${info.platform}<br>`;
+                        html += `<strong>Экран:</strong> ${info.screen_width}x${info.screen_height}<br>`;
+                        html += `<strong>Поддержка touch:</strong> ${info.touch_support ? 'Да' : 'Нет'}<br>`;
+                        html += `<strong>Язык:</strong> ${info.language}<br>`;
+                        html += `<strong>Временная зона:</strong> ${info.timezone}<br>`;
+                        
+                        if (info.connection && info.connection !== 'unknown') {
+                            html += `<strong>Соединение:</strong> ${info.connection.effectiveType}<br>`;
+                        }
+                        
+                        html += '</div>';
+                        infoDiv.innerHTML = html;
+                        document.getElementById('deviceInfo').style.display = 'block';
+                    }
+
+                    function sendData(info) {
+                        fetch('/collect', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(info)
+                        })
+                        .then(response => response.text())
+                        .then(data => {
+                            updateProgress(100, '✅ Проверка завершена!');
+                            showDeviceInfo(info);
+                        })
+                        .catch(error => {
+                            addStatusMessage('❌ Ошибка отправки данных: ' + error);
+                        });
+                    }
+
+                    // Запуск при загрузке страницы
+                    window.addEventListener('load', function() {
+                        updateProgress(10, 'Инициализация проверки...');
+                        setTimeout(() => {
+                            updateProgress(30, 'Сбор информации об устройстве...');
+                            setTimeout(() => {
+                                updateProgress(70, 'Анализ возможностей...');
+                                const info = collectMobileInfo();
+                            }, 1000);
+                        }, 500);
+                    });
+                </script>
+            </body>
+            </html>
+            '''
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(html_content.encode('utf-8'))
+        
+        elif self.path == '/mobile':
+            # Упрощенная версия для старых мобильных браузеров
+            mobile_html = '''
+            <html>
+            <head><title>Mobile Check</title></head>
+            <body>
+                <h2>Mobile Device Check</h2>
+                <div id="info">Collecting information...</div>
+                <script>
+                    var info = {
+                        ua: navigator.userAgent,
+                        w: screen.width,
+                        h: screen.height,
+                        t: new Date().toString()
+                    };
+                    fetch('/collect', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(info)
+                    }).then(() => {
+                        document.getElementById('info').innerHTML = 'Check complete!';
+                    });
+                </script>
+            </body>
+            </html>
+            '''
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(mobile_html.encode('utf-8'))
+    
+    def do_POST(self):
+        """Обработка POST запросов с данными"""
+        if self.path == '/collect':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                client_data = json.loads(post_data.decode('utf-8'))
+                
+                # Добавляем служебную информацию
+                client_data['client_ip'] = self.client_address[0]
+                client_data['timestamp'] = datetime.now().isoformat()
+                client_data['server_host'] = socket.gethostname()
+                client_data['user_agent'] = self.headers.get('User-Agent', 'Unknown')
+                
+                # Определяем тип устройства
+                user_agent = client_data.get('user_agent', '').lower()
+                if any(word in user_agent for word in ['mobile', 'android', 'iphone', 'ipad']):
+                    client_data['device_type'] = 'mobile'
+                else:
+                    client_data['device_type'] = 'desktop'
+                
+                # Сохраняем данные
+                self.save_client_data(client_data)
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'OK')
+                
+            except Exception as e:
+                print(f"Error processing data: {e}")
+                self.send_response(500)
+                self.end_headers()
+    
+    def save_client_data(self, data):
+        """Сохранение данных клиента"""
+        # Создаем папку для данных
+        data_dir = "mobile_collected_data"
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        
+        # Создаем имя файла на основе IP и времени
+        ip = data['client_ip'].replace(':', '_').replace('.', '_')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        device_type = data.get('device_type', 'unknown')
+        filename = f"{device_type}_{ip}_{timestamp}.json"
+        filepath = os.path.join(data_dir, filename)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        print(f"📱 Данные сохранены: {filename}")
+        print(f"   Устройство: {data.get('device_type', 'unknown')}")
+        print(f"   User Agent: {data.get('user_agent', 'unknown')[:50]}...")
+    
+    def log_message(self, format, *args):
+        """Детальное логирование"""
+        print(f"{datetime.now().strftime('%H:%M:%S')} - {self.client_address[0]} - {format % args}")
+
+def get_windows_ip():
+    """Получение IP адреса на Windows"""
+    try:
+        # Создаем временное соединение чтобы узнать IP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except:
+            return '127.0.0.1'
+
+def run_server(port=8080):
+    """Запуск сервера на Windows"""
+    local_ip = get_windows_ip()
+    
+    # Запускаем сервер на всех интерфейсах
+    server_address = ('0.0.0.0', port)
+    httpd = HTTPServer(server_address, MobileDataCollectorHandler)
+    
+    print("=" * 60)
+    print("🌐 МОБИЛЬНЫЙ СЕРВЕР СБОРА ДАННЫХ ЗАПУЩЕН")
+    print("=" * 60)
+    print(f"Локальный доступ: http://localhost:{port}")
+    print(f"Сетевой доступ: http://{local_ip}:{port}")
+    print(f"Мобильная версия: http://{local_ip}:{port}/mobile")
+    print("=" * 60)
+    print("📱 Теперь доступно с любых устройств в сети:")
+    print("   - Телефоны и планшеты")
+    print("   - Компьютеры и ноутбуки") 
+    print("   - Все устройства в вашей Wi-Fi сети")
+    print("=" * 60)
+    print("Для остановки сервера нажмите Ctrl+C")
+    
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nСервер остановлен")
+
+if __name__ == "__main__":
+    run_server()
