@@ -1,0 +1,299 @@
+import json
+import os
+import glob
+from datetime import datetime
+import statistics
+
+class UnifiedDataAnalyzer:
+    def __init__(self, data_dirs=None):
+        if data_dirs is None:
+            data_dirs = ["collected_data", "mobile_collected_data"]
+        self.data_dirs = data_dirs
+        self.all_data = []
+    
+    def load_all_data(self):
+        """Загрузка данных из всех указанных папок"""
+        for data_dir in self.data_dirs:
+            if not os.path.exists(data_dir):
+                print(f"⚠ Папка {data_dir} не найдена, пропускаем...")
+                continue
+                
+            json_files = glob.glob(os.path.join(data_dir, "*.json"))
+            print(f"📁 Найдено {len(json_files)} файлов в {data_dir}")
+            
+            for file_path in json_files:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        data['_source_file'] = os.path.basename(file_path)
+                        data['_source_dir'] = data_dir
+                        
+                        # Определяем тип устройства если не указан
+                        if 'device_type' not in data:
+                            data['device_type'] = self.detect_device_type(data)
+                            
+                        self.all_data.append(data)
+                except Exception as e:
+                    print(f"❌ Ошибка загрузки {file_path}: {e}")
+        
+        print(f"✅ Загружено всего записей: {len(self.all_data)}")
+    
+    def detect_device_type(self, data):
+        """Автоматическое определение типа устройства"""
+        user_agent = data.get('user_agent', '').lower()
+        
+        mobile_keywords = ['mobile', 'android', 'iphone', 'ipad', 'windows phone']
+        desktop_keywords = ['windows', 'linux', 'macintosh', 'chrome', 'firefox']
+        
+        if any(keyword in user_agent for keyword in mobile_keywords):
+            return 'mobile'
+        elif any(keyword in user_agent for keyword in desktop_keywords):
+            return 'desktop'
+        else:
+            return 'unknown'
+    
+    def generate_comprehensive_report(self):
+        """Генерация комплексного отчета"""
+        if not self.all_data:
+            return "Нет данных для анализа"
+        
+        stats = {
+            'total_devices': len(self.all_data),
+            'device_types': {},
+            'browsers': {},
+            'platforms': {},
+            'resolutions': {},
+            'timezones': {},
+            'languages': {},
+            'connection_types': {},
+            'screen_stats': {},
+            'mobile_specific': {},
+            'desktop_specific': {}
+        }
+        
+        # Анализ всех устройств
+        for client in self.all_data:
+            device_type = client.get('device_type', 'unknown')
+            stats['device_types'][device_type] = stats['device_types'].get(device_type, 0) + 1
+            
+            # Браузеры
+            browser = self.extract_browser(client.get('user_agent', ''))
+            stats['browsers'][browser] = stats['browsers'].get(browser, 0) + 1
+            
+            # Платформы
+            platform = client.get('platform', 'unknown')
+            stats['platforms'][platform] = stats['platforms'].get(platform, 0) + 1
+            
+            # Разрешения
+            resolution = self.get_resolution(client)
+            if resolution:
+                stats['resolutions'][resolution] = stats['resolutions'].get(resolution, 0) + 1
+            
+            # Языки
+            language = client.get('language', 'unknown')
+            stats['languages'][language] = stats['languages'].get(language, 0) + 1
+            
+            # Временные зоны
+            timezone = client.get('timezone', 'unknown')
+            stats['timezones'][timezone] = stats['timezones'].get(timezone, 0) + 1
+            
+            # Типы соединений (для мобильных)
+            if client.get('connection') and client['connection'] != 'unknown':
+                conn_type = client['connection'].get('effectiveType', 'unknown')
+                stats['connection_types'][conn_type] = stats['connection_types'].get(conn_type, 0) + 1
+            
+            # Мобильная специфика
+            if device_type == 'mobile':
+                self.analyze_mobile_specific(client, stats)
+            # Десктопная специфика
+            elif device_type == 'desktop':
+                self.analyze_desktop_specific(client, stats)
+        
+        return self.format_report(stats)
+    
+    def get_resolution(self, client):
+        """Получение разрешения экрана"""
+        if 'screen_width' in client and 'screen_height' in client:
+            return f"{client['screen_width']}x{client['screen_height']}"
+        elif 'screen_resolution' in client:
+            return client['screen_resolution']
+        else:
+            return None
+    
+    def analyze_mobile_specific(self, client, stats):
+        """Анализ мобильных специфических данных"""
+        # Touch поддержка
+        touch = client.get('touch_support', False)
+        stats['mobile_specific']['touch_devices'] = stats['mobile_specific'].get('touch_devices', 0) + (1 if touch else 0)
+        
+        # Multi-touch
+        touch_points = client.get('max_touch_points', 0)
+        if touch_points > 0:
+            stats['mobile_specific']['multi_touch_devices'] = stats['mobile_specific'].get('multi_touch_devices', 0) + 1
+        
+        # Батарея
+        if 'battery' in client:
+            stats['mobile_specific']['battery_info_available'] = stats['mobile_specific'].get('battery_info_available', 0) + 1
+    
+    def analyze_desktop_specific(self, client, stats):
+        """Анализ десктопных специфических данных"""
+        # Аппаратные характеристики
+        cores = client.get('hardware_concurrency')
+        if cores and cores != 'unknown':
+            stats['desktop_specific']['cpu_cores'] = stats['desktop_specific'].get('cpu_cores', []) + [int(cores)]
+        
+        memory = client.get('device_memory')
+        if memory and memory != 'unknown':
+            stats['desktop_specific']['memory_gb'] = stats['desktop_specific'].get('memory_gb', []) + [int(memory)]
+    
+    def extract_browser(self, user_agent):
+        """Извлечение браузера из User Agent"""
+        ua = user_agent.lower()
+        if 'chrome' in ua and 'edg' not in ua:
+            return 'Chrome'
+        elif 'firefox' in ua:
+            return 'Firefox'
+        elif 'safari' in ua and 'chrome' not in ua:
+            return 'Safari'
+        elif 'edg' in ua:
+            return 'Edge'
+        elif 'opera' in ua:
+            return 'Opera'
+        elif 'mobile' in ua:
+            return 'Mobile Browser'
+        else:
+            return 'Other'
+    
+    def format_report(self, stats):
+        """Форматирование отчета"""
+        report = [
+            "📊 КОМПЛЕКСНЫЙ ОТЧЕТ ПО СОБРАННЫМ ДАННЫМ",
+            "=" * 60,
+            f"Дата генерации: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Всего устройств: {stats['total_devices']}",
+            "",
+            "📱 РАСПРЕДЕЛЕНИЕ ПО ТИПАМ УСТРОЙСТВ:",
+        ]
+        
+        for device_type, count in stats['device_types'].items():
+            percentage = (count / stats['total_devices']) * 100
+            report.append(f"  {device_type}: {count} ({percentage:.1f}%)")
+        
+        report.extend([
+            "",
+            "🌐 БРАУЗЕРЫ:",
+        ])
+        
+        for browser, count in stats['browsers'].items():
+            report.append(f"  {browser}: {count}")
+        
+        report.extend([
+            "",
+            "💻 ПЛАТФОРМЫ:",
+        ])
+        
+        for platform, count in stats['platforms'].items():
+            report.append(f"  {platform}: {count}")
+        
+        # Мобильная статистика
+        if 'mobile_specific' in stats and stats['device_types'].get('mobile', 0) > 0:
+            report.extend([
+                "",
+                "📱 МОБИЛЬНЫЕ УСТРОЙСТВА:",
+                f"  С поддержкой touch: {stats['mobile_specific'].get('touch_devices', 0)}",
+                f"  С multi-touch: {stats['mobile_specific'].get('multi_touch_devices', 0)}",
+                f"  С информацией о батарее: {stats['mobile_specific'].get('battery_info_available', 0)}",
+            ])
+        
+        # Десктопная статистика
+        if 'desktop_specific' in stats and stats['device_types'].get('desktop', 0) > 0:
+            cores = stats['desktop_specific'].get('cpu_cores', [])
+            memory = stats['desktop_specific'].get('memory_gb', [])
+            
+            if cores:
+                report.extend([
+                    "",
+                    "🖥️ ДЕСКТОПНЫЕ УСТРОЙСТВА:",
+                    f"  Среднее количество ядер: {statistics.mean(cores):.1f}",
+                    f"  Минимальное ядер: {min(cores)}",
+                    f"  Максимальное ядер: {max(cores)}",
+                ])
+            
+            if memory:
+                report.extend([
+                    f"  Средняя память: {statistics.mean(memory):.1f} GB",
+                    f"  Минимальная память: {min(memory)} GB", 
+                    f"  Максимальная память: {max(memory)} GB",
+                ])
+        
+        # Популярные разрешения
+        if stats['resolutions']:
+            report.extend([
+                "",
+                "📏 ПОПУЛЯРНЫЕ РАЗРЕШЕНИЯ ЭКРАНОВ:",
+            ])
+            top_resolutions = sorted(stats['resolutions'].items(), key=lambda x: x[1], reverse=True)[:5]
+            for resolution, count in top_resolutions:
+                report.append(f"  {resolution}: {count}")
+        
+        # Географическая информация
+        if stats['timezones']:
+            report.extend([
+                "",
+                "🌍 ГЕОГРАФИЧЕСКОЕ РАСПРЕДЕЛЕНИЕ:",
+            ])
+            for tz, count in list(stats['timezones'].items())[:5]:
+                report.append(f"  {tz}: {count}")
+        
+        return "\n".join(report)
+    
+    def save_report(self, report, filename="unified_report.txt"):
+        """Сохранение отчета в файл"""
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(report)
+        print(f"✅ Отчет сохранен в: {filename}")
+    
+    def show_detailed_info(self):
+        """Показать детальную информацию о всех устройствах"""
+        print("\n" + "=" * 70)
+        print("ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ПО ВСЕМ УСТРОЙСТВАМ")
+        print("=" * 70)
+        
+        for i, client in enumerate(self.all_data, 1):
+            print(f"\n--- Устройство #{i} ---")
+            print(f"Тип: {client.get('device_type', 'unknown')}")
+            print(f"IP: {client.get('client_ip', 'N/A')}")
+            print(f"Время: {client.get('timestamp', 'N/A')}")
+            
+            resolution = self.get_resolution(client)
+            if resolution:
+                print(f"Экран: {resolution}")
+            
+            print(f"Браузер: {self.extract_browser(client.get('user_agent', ''))}")
+            print(f"Платформа: {client.get('platform', 'N/A')}")
+            
+            # Обрезаем длинный User Agent
+            ua = client.get('user_agent', 'N/A')
+            if len(ua) > 60:
+                ua = ua[:57] + "..."
+            print(f"User Agent: {ua}")
+
+def main():
+    """Главная функция"""
+    print("🔄 Загрузка данных...")
+    
+    analyzer = UnifiedDataAnalyzer()
+    analyzer.load_all_data()
+    
+    if analyzer.all_data:
+        report = analyzer.generate_comprehensive_report()
+        print("\n" + report)
+        
+        analyzer.save_report(report)
+        analyzer.show_detailed_info()
+    else:
+        print("❌ Нет данных для анализа")
+        print("Запустите сначала сервер и соберите данные с устройств")
+
+if __name__ == "__main__":
+    main()
