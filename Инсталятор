@@ -1,0 +1,466 @@
+import os
+import time
+import winreg
+import platform
+import psutil
+import json
+import hashlib
+from datetime import datetime
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import sys
+import getpass
+
+class SystemInfoInstaller:
+    def __init__(self):
+        self.student_name = "Шитый"  # ИСПРАВЛЕНО НА ШИТЫЙ
+        self.registry_path = f"Software\\{self.student_name}"
+        
+    def show_progress_installation(self):
+        """Показ прогресса установки обновления"""
+        root = tk.Tk()
+        root.title("Установка обновления Windows")
+        root.geometry("500x200")
+        root.resizable(False, False)
+        
+        # Центрируем окно
+        root.eval('tk::PlaceWindow . center')
+        
+        label = tk.Label(root, text="Установка важного обновления для системы Windows...", 
+                        font=("Arial", 12), pady=10)
+        label.pack()
+        
+        progress = ttk.Progressbar(root, orient="horizontal", length=400, mode="determinate")
+        progress.pack(pady=20)
+        
+        status_label = tk.Label(root, text="Подготовка к установке...", font=("Arial", 10))
+        status_label.pack()
+        
+        root.update()
+        
+        # Имитация установки обновления
+        steps = [
+            "Проверка системы...",
+            "Загрузка компонентов обновления...", 
+            "Установка файлов обновления...",
+            "Настройка параметров системы...",
+            "Завершение установки..."
+        ]
+        
+        for i, step in enumerate(steps):
+            progress['value'] = (i + 1) * 20
+            status_label.config(text=step)
+            root.update()
+            time.sleep(1)
+        
+        root.destroy()
+    
+    def select_installation_folder(self):
+        """Выбор папки для установки"""
+        root = tk.Tk()
+        root.withdraw()
+        
+        messagebox.showinfo("Выбор папки", 
+                           "Выберите папку для установки системной информации.\n\n"
+                           "Можно выбрать существующую папку или создать новую.")
+        
+        folder = filedialog.askdirectory(title="Выберите папку для установки системной информации")
+        
+        if not folder:
+            # Папка по умолчанию
+            folder = os.path.join(os.path.expanduser("~"), "SystemData")
+            os.makedirs(folder, exist_ok=True)
+            messagebox.showinfo("Информация", f"Используется папка по умолчанию:\n{folder}")
+        
+        return folder
+    
+    def collect_system_info(self):
+        """Сбор системной информации"""
+        print("Сбор системной информации...")
+        
+        try:
+            # Получаем базовую информацию о системе
+            info = {
+                "Имя пользователя": getpass.getuser(),
+                "Имя компьютера": platform.node(),
+                "Операционная система": f"{platform.system()} {platform.release()}",
+                "Версия ОС": platform.version(),
+                "Архитектура": platform.architecture()[0],
+                "Процессор": platform.processor(),
+                "Количество ядер (физических)": psutil.cpu_count(logical=False),
+                "Количество потоков (логических)": psutil.cpu_count(logical=True),
+                "Общий объем памяти (ГБ)": round(psutil.virtual_memory().total / (1024**3), 2),
+                "Доступно памяти (ГБ)": round(psutil.virtual_memory().available / (1024**3), 2),
+                "Использование памяти (%)": psutil.virtual_memory().percent,
+                "Дата и время сбора": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            return info
+        except Exception as e:
+            print(f"Ошибка при сборе информации: {e}")
+            return None
+    
+    def generate_keys(self):
+        """Генерация RSA ключей"""
+        print("Генерация ключей шифрования...")
+        
+        try:
+            private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048
+            )
+            public_key = private_key.public_key()
+            
+            return private_key, public_key
+        except Exception as e:
+            print(f"Ошибка генерации ключей: {e}")
+            return None, None
+    
+    def save_keys_to_files(self, private_key, public_key, install_folder):
+        """Сохранение ключей в файлы"""
+        try:
+            # Сохраняем приватный ключ
+            private_key_path = os.path.join(install_folder, "private_key.pem")
+            with open(private_key_path, "wb") as f:
+                f.write(private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                ))
+            
+            # Сохраняем публичный ключ
+            public_key_path = os.path.join(install_folder, "public_key.pem")
+            with open(public_key_path, "wb") as f:
+                f.write(public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ))
+            
+            print("✓ Ключи сохранены в файлы")
+            return True
+        except Exception as e:
+            print(f"Ошибка сохранения ключей: {e}")
+            return False
+    
+    def save_signature_to_registry(self, signature):
+        """Сохранение подпись в реестр Windows"""
+        try:
+            # Создаем раздел в реестре
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, self.registry_path):
+                pass
+            
+            # Сохраняем подпись
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.registry_path, 0, winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, "Signature", 0, winreg.REG_BINARY, signature)
+            
+            print("✓ Подпись сохранена в реестр")
+            return True
+        except Exception as e:
+            print(f"Ошибка сохранения в реестр: {e}")
+            return False
+    
+    def sign_data(self, data, private_key):
+        """Подпись данных"""
+        try:
+            # Преобразуем данные в строку для подписи
+            data_str = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=2)
+            
+            signature = private_key.sign(
+                data_str.encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            
+            return signature
+        except Exception as e:
+            print(f"Ошибка подписи данных: {e}")
+            return None
+    
+    def create_sys_tat_file(self, system_info, install_folder):
+        """Создание файла sys.tat с системной информацией"""
+        try:
+            tat_path = os.path.join(install_folder, "sys.tat")
+            
+            # Сохраняем в JSON формате для точного восстановления при проверке
+            with open(tat_path, 'w', encoding='utf-8') as f:
+                json.dump(system_info, f, ensure_ascii=False, indent=2)
+            
+            print(f"✓ Файл sys.tat создан: {tat_path}")
+            return tat_path
+        except Exception as e:
+            print(f"Ошибка создания sys.tat: {e}")
+            return None
+    
+    def create_secur_script(self, install_folder):
+        """Создание программы защиты secur.py"""
+        try:
+            secur_py_path = os.path.join(install_folder, "secur.py")
+            
+            secur_code = '''# secur.py - Программа для просмотра защищенной информации
+import os
+import sys
+import winreg
+import json
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import serialization
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+
+class SecurProtector:
+    def __init__(self):
+        self.student_name = "Шитый"
+        
+    def get_student_name(self):
+        """Запрос фамилии студента"""
+        root = tk.Tk()
+        root.withdraw()
+        
+        student_name = simpledialog.askstring("Аутентификация", 
+                                            "Введите фамилию студента для доступа к системной информации:")
+        if student_name is None:
+            return None
+        return student_name.strip()
+    
+    def verify_signature(self, data, signature, public_key):
+        """Проверка цифровой подписи"""
+        try:
+            data_str = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=2)
+            
+            public_key.verify(
+                signature,
+                data_str.encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            return True
+        except Exception as e:
+            print(f"Ошибка проверки подписи: {e}")
+            return False
+    
+    def get_signature_from_registry(self, student_name):
+        """Получение подписи из реестра"""
+        try:
+            registry_path = f"Software\\\\{student_name}"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path) as key:
+                signature, _ = winreg.QueryValueEx(key, "Signature")
+                return signature
+        except Exception as e:
+            print(f"Ошибка чтения из реестра: {e}")
+            return None
+    
+    def load_public_key(self, install_folder):
+        """Загрузка публичного ключа из файла"""
+        try:
+            public_key_path = os.path.join(install_folder, "public_key.pem")
+            with open(public_key_path, "rb") as f:
+                public_key = serialization.load_pem_public_key(f.read())
+            return public_key
+        except Exception as e:
+            print(f"Ошибка загрузки публичного ключа: {e}")
+            return None
+    
+    def load_system_info(self, tat_path):
+        """Загрузка системной информации из файла"""
+        try:
+            with open(tat_path, 'r', encoding='utf-8') as f:
+                system_info = json.load(f)
+            return system_info
+        except Exception as e:
+            print(f"Ошибка чтения файла: {e}")
+            return None
+    
+    def show_system_info(self, system_info):
+        """Отображение системной информации"""
+        root = tk.Tk()
+        root.title("Системная информация - Защищенный просмотр")
+        root.geometry("600x400")
+        
+        text_widget = tk.Text(root, wrap=tk.WORD, font=("Arial", 10))
+        scrollbar = tk.Scrollbar(root, orient="vertical", command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        text_widget.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Форматируем информацию для отображения
+        display_text = "СИСТЕМНАЯ ИНФОРМАЦИЯ\\n"
+        display_text += "=" * 50 + "\\n"
+        for key, value in system_info.items():
+            display_text += f"{key}: {value}\\n"
+        
+        text_widget.insert("1.0", display_text)
+        text_widget.config(state="disabled")
+        
+        root.mainloop()
+    
+    def run(self):
+        """Основной метод программы"""
+        # Получаем фамилию студента
+        input_name = self.get_student_name()
+        if not input_name:
+            messagebox.showerror("Ошибка", "Фамилия не введена!")
+            sys.exit(1)
+        
+        # Определяем путь к sys.tat
+        if len(sys.argv) > 1:
+            tat_path = sys.argv[1]
+        else:
+            # Ищем в текущей директории
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            tat_path = os.path.join(current_dir, "sys.tat")
+        
+        if not os.path.exists(tat_path):
+            messagebox.showerror("Ошибка", f"Файл sys.tat не найден!\\nПуть: {tat_path}")
+            sys.exit(1)
+        
+        # Загружаем системную информацию
+        system_info = self.load_system_info(tat_path)
+        if not system_info:
+            messagebox.showerror("Ошибка", "Не удалось загрузить системную информацию!")
+            sys.exit(1)
+        
+        # Получаем подпись из реестра
+        signature = self.get_signature_from_registry(input_name)
+        if not signature:
+            messagebox.showerror("Ошибка", 
+                               "Не удалось получить цифровую подпись из реестра!\\n"
+                               "Возможно, неправильно указана фамилия.")
+            sys.exit(1)
+        
+        # Загружаем публичный ключ
+        install_folder = os.path.dirname(tat_path)
+        public_key = self.load_public_key(install_folder)
+        if not public_key:
+            messagebox.showerror("Ошибка", "Не удалось загрузить публичный ключ!")
+            sys.exit(1)
+        
+        # Проверяем подпись
+        if self.verify_signature(system_info, signature, public_key):
+            messagebox.showinfo("Успех", "Цифровая подпись подтверждена!\\nОткрываю системную информацию...")
+            self.show_system_info(system_info)
+        else:
+            messagebox.showerror("Ошибка безопасности", 
+                               "Цифровая подпись недействительна!\\n"
+                               "Доступ к информации запрещен.")
+            sys.exit(1)
+
+if __name__ == "__main__":
+    protector = SecurProtector()
+    protector.run()
+'''
+            
+            with open(secur_py_path, 'w', encoding='utf-8') as f:
+                f.write(secur_code)
+            
+            print(f"✓ Программа защиты создана: {secur_py_path}")
+            return secur_py_path
+            
+        except Exception as e:
+            print(f"Ошибка создания secur.py: {e}")
+            return None
+    
+    def create_file_association(self, install_folder):
+        """Создание ассоциации файлов .tat с secur.py"""
+        try:
+            secur_path = os.path.join(install_folder, "secur.py")
+            
+            # Создаем команду для ассоциации
+            command = f'"{sys.executable}" "{secur_path}" "%1"'
+            
+            # Создаем ассоциацию в реестре
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\Classes\\.tat"):
+                pass
+            
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"Software\\Classes\\.tat", 0, winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "SystemInfoFile")
+            
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, "Software\\Classes\\SystemInfoFile\\shell\\open\\command"):
+                pass
+            
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Software\\Classes\\SystemInfoFile\\shell\\open\\command", 0, winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command)
+            
+            print("✓ Ассоциация файлов .tat создана")
+            return True
+            
+        except Exception as e:
+            print(f"Ошибка создания ассоциации файлов: {e}")
+            return False
+    
+    def install(self):
+        """Основной процесс установки"""
+        print("=" * 60)
+        print("УСТАНОВКА СИСТЕМНОЙ ИНФОРМАЦИИ")
+        print("=" * 60)
+        
+        # Показываем прогресс установки (маскировка под обновление)
+        self.show_progress_installation()
+        
+        # Выбираем папку для установки
+        install_folder = self.select_installation_folder()
+        print(f"Папка установки: {install_folder}")
+        
+        # Собираем системную информацию
+        system_info = self.collect_system_info()
+        if not system_info:
+            messagebox.showerror("Ошибка", "Не удалось собрать системную информацию!")
+            return
+        
+        # Генерируем ключи
+        private_key, public_key = self.generate_keys()
+        if not private_key:
+            messagebox.showerror("Ошибка", "Не удалось сгенерировать ключи шифрования!")
+            return
+        
+        # Сохраняем ключи в файлы
+        if not self.save_keys_to_files(private_key, public_key, install_folder):
+            messagebox.showerror("Ошибка", "Не удалось сохранить ключи!")
+            return
+        
+        # Подписываем данные
+        signature = self.sign_data(system_info, private_key)
+        if not signature:
+            messagebox.showerror("Ошибка", "Не удалось подписать данные!")
+            return
+        
+        # Сохраняем подпись в реестр
+        if not self.save_signature_to_registry(signature):
+            messagebox.showerror("Ошибка", "Не удалось сохранить подпись в реестр!")
+            return
+        
+        # Создаем файл sys.tat
+        tat_path = self.create_sys_tat_file(system_info, install_folder)
+        if not tat_path:
+            messagebox.showerror("Ошибка", "Не удалось создать файл sys.tat!")
+            return
+        
+        # Создаем программу защиты
+        secur_path = self.create_secur_script(install_folder)
+        if not secur_path:
+            messagebox.showerror("Ошибка", "Не удалось создать программу защиты!")
+            return
+        
+        # Создаем ассоциацию файлов
+        if not self.create_file_association(install_folder):
+            messagebox.showwarning("Предупреждение", "Не удалось создать ассоциацию файлов!")
+        
+        messagebox.showinfo("Установка завершена", 
+                          "Системная информация успешно установлена и защищена!")
+
+def main():
+    """Главная функция"""
+    installer = SystemInfoInstaller()
+    installer.install()
+
+if __name__ == "__main__":
+    main()
